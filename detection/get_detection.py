@@ -185,6 +185,7 @@ def image_demo(predictor, vis_folder, current_time, args,scene):
         return preproc(img, predictor.test_size, predictor.rgb_means, predictor.std)
     
     batchsize = args.batchsize
+    print(cameras)
     for cam in cameras:
         if int(cam.split('_')[1])<0:
             continue
@@ -198,13 +199,10 @@ def image_demo(predictor, vis_folder, current_time, args,scene):
         id_bank = []
         carry_flag = False
         end_flag = False
-        pbar = tqdm()
+        pbar = tqdm(total=int(cap.get(cv2.CAP_PROP_FRAME_COUNT)), desc=f"Processing {cam}")
         
         while cap.isOpened() and not end_flag:
-            pbar.update()
-            # t0 = time.monotonic()
             ret, frame = cap.read()
-            # print(time.monotonic() - t0)
             if not ret:
                 end_flag = True
                 
@@ -213,6 +211,7 @@ def image_demo(predictor, vis_folder, current_time, args,scene):
                 id_bank.append(frame_id)
             
             frame_id += 1
+            pbar.update(1)
             
             if frame_id % 1000 == 0:
                 logger.info('Processing cam {} frame {} ({:.2f} fps)'.format(cam, frame_id, 1. / max(1e-5, timer.average_time) * batchsize))
@@ -229,15 +228,11 @@ def image_demo(predictor, vis_folder, current_time, args,scene):
             else:
                 carry_flag = False
                 continue
-            
-            t2 = time.time()
 
             if carry_flag:
                 # Detect objects
                 img_preproc, ratio = preproc_worker(img_data)
-                # print(time.monotonic() - t0)
                 outputs, img_info = predictor.inference(img_data, img_preproc, ratio, timer)
-                # print(time.monotonic() - t0)
                 outputs = outputs
                 for out_id in range(len(outputs)):
                     out_item = outputs[out_id]
@@ -249,18 +244,11 @@ def image_demo(predictor, vis_folder, current_time, args,scene):
 
                     for det in detections:
                         x1,y1,x2,y2,score,_,_ = det
-                        # x1 = max(0,x1)
-                        # y1 = max(0,y1)
-                        # x2 = min(1920,x2)
-                        # y2 = min(1080,y2)
                         results.append([cam,id_data[out_id],1,int(x1),int(y1),int(x2),int(y2),score])
                         
                 timer.toc()
-            t3 = time.time()
-            # print('t1:',t2-t1)
-            # print('t2:',t3-t2)
-            
         
+        pbar.close()
         output_file = osp.join(out_path,cam+'.txt')
         with open(output_file,'w') as f:
             for cam,frame_id,cls,x1,y1,x2,y2,score in results:

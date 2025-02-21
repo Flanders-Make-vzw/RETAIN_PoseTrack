@@ -7,5 +7,8 @@ setup(
     name="aic_cpp",
     version="1.0",
     description="Compute distance between two lines",
-    ext_modules=[module]
+    ext_modules=[module],
+    install_requires=[
+        "pybind11"
+    ]
 )
