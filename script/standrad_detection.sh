@@ -14,9 +14,13 @@ set -x
 start=61
 end=90
 start_gpu=1
-gpu_nums_per_iter=5 # gpu_nums_per_iter >= 1
+gpu_nums_per_iter=1 # gpu_nums_per_iter >= 1
 cpu_nums_per_item=4 #cpu_nums_per_item >= 1
 scene_per_iter=30   #scene_per_iter={1,2,5,10,15,30}
+
+num_cores=$(nproc)
+start_core=$((cpu_nums_per_item * (i - start)))
+end_core=$((start_core + cpu_nums_per_item - 1))
 
 
 for ((j=0; j < ($end-$start+1) / $scene_per_iter; j++)); do
@@ -26,9 +30,9 @@ for ((j=0; j < ($end-$start+1) / $scene_per_iter; j++)); do
       gpu_index=$((($i - $start - $j * $scene_per_iter) * $gpu_nums_per_iter / $scene_per_iter + $start_gpu))
 
       # 设置CUDA_VISIBLE_DEVICES环境变量以限制使用特定的GPU
-      export CUDA_VISIBLE_DEVICES=$[$gpu_index]
+      export CUDA_VISIBLE_DEVICES=0
 
-      taskset -c $[$cpu_nums_per_item*$[$i-$start]]-$[$cpu_nums_per_item*$[$i-$start]+$cpu_nums_per_item-1] python detection/get_detection.py --scene $i &
+      taskset -c $[$cpu_nums_per_item*$[$i-$start]]-$[$cpu_nums_per_item*$[$i-$start]+$cpu_nums_per_item-1] python3 detection/get_detection.py --scene $i &
   done
   wait
 done
