@@ -1,5 +1,5 @@
 Metadata-Version: 2.2
 Name: aic_cpp
 Version: 1.0
-Summary: Compute distance between two lines
-Dynamic: summary
+Requires-Dist: pybind11
+Dynamic: requires-dist

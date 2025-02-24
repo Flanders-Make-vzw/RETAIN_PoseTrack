@@ -3,24 +3,49 @@ import cv2
 import os
 import json
 import scipy
-
+import sys
+sys.path.append('/home/track/aic_cpp')
+import aic_cpp
 
 class Camera():
-    def __init__(self,cal_path):
-        with open(cal_path, 'r') as file:
-            data = json.load(file)
-        self.project_mat = np.array(data["camera projection matrix"])
-        self.homo_mat = np.array(data["homography matrix"])
+    def __init__(self,calib_data):
+
+        self.project_mat = np.array(calib_data["camera projection matrix"])
+        self.homo_mat = np.array(calib_data["homography matrix"])
+
         self.homo_inv = np.linalg.inv(self.homo_mat)
         self.project_inv = scipy.linalg.pinv(self.project_mat)
-        self.pos = np.linalg.inv(self.project_mat[:,:-1]) @ - self.project_mat[:,-1]
+        
+        # Calculate camera position using pseudo-inverse
+        R = self.project_mat[:3, :3]  # Extract rotation matrix
+        t = np.zeros(3)  # Initialize translation vector
+        self.pos = -np.linalg.inv(R) @ t  # Calculate camera center
 
         self.homo_feet = self.homo_mat.copy()
-        self.homo_feet[:,-1] = self.homo_feet[:,-1] + self.project_mat[:,2]*0.15 # z=0.15
+        self.homo_feet[:, -1] = self.homo_feet[:, -1] + self.project_mat[:, 2] * 0.15  # z=0.15
         self.homo_feet_inv = np.linalg.inv(self.homo_feet)
-        # index (str) in whole dataset
-        self.idx = cal_path.split("/")[-2][-4:]
-        self.idx_int = int(self.idx)
+        self.idx_int = calib_data["idx"]
+
+    @staticmethod
+    def from_colruyt_calib(calib_data):
+        s = calib_data["intrinsics"]["camera_matrix"]["s"]
+        w = calib_data["image_size"]["w"]
+        h = calib_data["image_size"]["h"]
+        processed_calib_data = {
+            "camera projection matrix": [
+                [s, 0, w / 2],
+                [0, s, h / 2],
+                [0, 0, 1]
+            ],
+            "homography matrix": [
+                [1, 0, 0],
+                [0, 1, 0],
+                [0, 0, 1]
+            ],
+            "idx": calib_data["camera_serial"]
+        }
+        camera = Camera(processed_calib_data)
+        return camera
 
 def cross(R,V):
     h = [R[1] * V[2] - R[2] * V[1],
@@ -74,7 +99,9 @@ def epipolar_3d_score_norm(pA, rayA, pB, rayB, alpha_epi):
     dist = Line2LineDist_norm(pA, rayA, pB, rayB)
     return 1- dist/alpha_epi
 
-import aic_cpp
+# import aic_cpp
+# print(dir(aic_cpp))
+
 epipolar_3d_score_norm = aic_cpp.epipolar_3d_score_norm
 
 # def epipolar_3d_score(rayA, rayB, alpha_epi):

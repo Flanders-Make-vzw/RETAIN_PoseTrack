@@ -1,14 +1,13 @@
-from setuptools import setup
-from pybind11.setup_helpers import Pybind11Extension
-
-module = Pybind11Extension("aic_cpp", sources=["src/aic.cpp"])
+# filepath: /home/track/aic_cpp/setup.py
+from setuptools import setup, find_packages
 
 setup(
-    name="aic_cpp",
-    version="1.0",
-    description="Compute distance between two lines",
-    ext_modules=[module],
+    name='aic_cpp',
+    version='1.0',
+    packages=find_packages(),
     install_requires=[
-        "pybind11"
-    ]
+        'pybind11',
+        # other dependencies
+    ],
+    # other setup parameters
 )

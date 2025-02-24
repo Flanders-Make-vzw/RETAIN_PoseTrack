@@ -1,6 +1,7 @@
 dataset/test/*
 dataset/train/*
 dataset/val/*
+dataset/*.json
 
 result/detection/*
 result/pose/*
