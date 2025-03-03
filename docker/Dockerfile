@@ -2,7 +2,7 @@ FROM nvidia/cuda:11.8.0-cudnn8-devel-ubuntu22.04
 
 ENV DEBIAN_FRONTEND=noninteractive
 
-RUN apt-get update -y && apt-get upgrade -y  ca-certificates wget build-essential git libgl1-mesa-glx libglib2.0-0 libsm6 libxrender1 libxext6 && \
+RUN apt-get update -y && apt-get upgrade -y  ca-certificates wget build-essential git libgl1-mesa-glx libglib2.0-0 libsm6 libxrender1 libxext6 xvfb && \
         apt-get autoremove -y && apt-get clean -y
 
 RUN apt-get update -y && apt-get install -y software-properties-common && \
@@ -43,6 +43,10 @@ RUN python3 -m mim install "mmengine>=0.6.0" && \
     python3 -m pip install 'git+https://github.com/cocodataset/cocoapi.git#subdirectory=PythonAPI'
 
 # Install torch2trt
-RUN git clone https://github.com/NVIDIA-AI-IOT/torch2trt.git /workspace/torch2trt && \
-    cd /workspace/torch2trt && \
-    python3 setup.py install
+# RUN git clone https://github.com/NVIDIA-AI-IOT/torch2trt.git /workspace/torch2trt && \
+#     cd /workspace/torch2trt && \
+#     python3 setup.py install
+
+COPY docker/entrypoint.sh /entrypoint.sh
+RUN chmod +x /entrypoint.sh
+ENTRYPOINT ["/entrypoint.sh"]

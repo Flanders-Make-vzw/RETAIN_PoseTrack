@@ -107,26 +107,14 @@ Adapted python script to function with correct offset of start/end scene
 python3 tools/infer.py --start 2 --end 2
 ```
 
-
 ### 5. Tracking
+
+Original SCript:
 ```
 script/run_track.sh
 ```
 
-### 6. Generate final submission
+Adapted Python script:
+```Bash
+python3 track/run_tracking_batch.py
 ```
-python3 track/generate_submission.py
-```
-
-The final result is located in `result/track.txt`. You can compress it and upload it to the AIC24 evaluation system.
-
-
-## Acknowledgement
-
-We appreciate the following github repos a lot for their valuable code base or datasets:
-
-https://github.com/ifzhang/ByteTrack
-
-https://github.com/JDAI-CV/fast-reid
-
-https://github.com/longcw/crossview_3d_pose_tracking

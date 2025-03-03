@@ -8,6 +8,7 @@ result/pose/*
 result/reid/*
 result/track/*
 result/track_log/*
+result/annotated/*
 
 ckpt_weight/*
 

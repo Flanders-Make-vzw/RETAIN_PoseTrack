@@ -6,6 +6,7 @@ import time
 import cv2
 import torch
 import numpy as np
+import json
 
 from loguru import logger
 
@@ -64,6 +65,10 @@ def make_parser():
     parser.add_argument("--fuse", dest="fuse", default=False, action="store_true", help="Fuse conv and bn for testing.")
     parser.add_argument("--trt", dest="trt", default=False, action="store_true", help="Using TensorRT model for testing.")
     parser.add_argument("--batchsize",default=1, type=int, help="batchsize")
+    
+    # New arguments for saving images
+    parser.add_argument("--save_rescaled", action="store_true", help="Save rescaled images")
+    parser.add_argument("--save_padded", action="store_true", help="Save padded images")
 
     # tracking args
     parser.add_argument("--track_high_thresh", type=float, default=0.6, help="tracking confidence threshold")
@@ -168,31 +173,42 @@ class Predictor(object):
         return outputs, img_info
 
 
-def image_demo(predictor, vis_folder, current_time, args,scene):
+def image_demo(predictor, vis_folder, current_time, args, scene):
     current_file_path = os.path.abspath(__file__)
     path_arr = current_file_path.split('/')[:-2]
     root_path = '/'.join(path_arr)
-    input = osp.join(root_path,'dataset/test','scene_0'+"{:02d}".format(scene))
-    out_path = osp.join(root_path,'result/detection','scene_0'+"{:02d}".format(scene))
-    
+
+    input = osp.join(root_path, 'dataset/test', 'scene_0' + "{:02d}".format(scene))
+    out_path = osp.join(root_path, 'result/detection', 'scene_0' + "{:02d}".format(scene))
+
+    rescaled_path = osp.join(out_path, 'rescaled')
+    padded_path = osp.join(out_path, 'padded')
+    json_path = osp.join(out_path, 'ratios_and_paddings.json')
+
     if not os.path.exists(out_path):
         os.makedirs(out_path)
+    if args.save_rescaled and not os.path.exists(rescaled_path):
+        os.makedirs(rescaled_path)
+    if args.save_padded and not os.path.exists(padded_path):
+        os.makedirs(padded_path)
 
     cameras = sorted(os.listdir(input))
-    scale = min(800/1080,1440/1920)
-    
+    scale = min(800 / 1080, 1440 / 1920)
+    # print("Predictor test size:", predictor.test_size)
+
     def preproc_worker(img):
         return preproc(img, predictor.test_size, predictor.rgb_means, predictor.std)
-    
+
     batchsize = args.batchsize
-    print(cameras)
+    # print(cameras)
+    ratios_and_paddings = {}
     for cam in cameras:
-        if int(cam.split('_')[1])<0:
+        if int(cam.split('_')[1]) < 0:
             continue
         frame_id = 0
         results = []
-        print(cam)
-        video_path = osp.join(input,cam,'video.mp4')
+        # print(cam)
+        video_path = osp.join(input, cam, 'video.mp4')
         cap = cv2.VideoCapture(video_path)
         timer = Timer()
         memory_bank = []
@@ -200,22 +216,22 @@ def image_demo(predictor, vis_folder, current_time, args,scene):
         carry_flag = False
         end_flag = False
         pbar = tqdm(total=int(cap.get(cv2.CAP_PROP_FRAME_COUNT)), desc=f"Processing {cam}")
-        
+
         while cap.isOpened() and not end_flag:
             ret, frame = cap.read()
             if not ret:
                 end_flag = True
-                
+
             if not end_flag:
                 memory_bank.append(frame)
                 id_bank.append(frame_id)
-            
+
             frame_id += 1
             pbar.update(1)
-            
+
             if frame_id % 1000 == 0:
                 logger.info('Processing cam {} frame {} ({:.2f} fps)'.format(cam, frame_id, 1. / max(1e-5, timer.average_time) * batchsize))
-                
+
             if frame_id % batchsize == 0 or end_flag:
                 if memory_bank:
                     img_data = memory_bank
@@ -232,7 +248,37 @@ def image_demo(predictor, vis_folder, current_time, args,scene):
             if carry_flag:
                 # Detect objects
                 img_preproc, ratio = preproc_worker(img_data)
+
+                # Calculate padding
+                pad_x = (predictor.test_size[1] - img_data[0].shape[1] * ratio) / 2
+                pad_y = (predictor.test_size[0] - img_data[0].shape[0] * ratio) / 2
+
+                # Store ratio and padding for the current camera
+                if cam not in ratios_and_paddings:
+                    ratios_and_paddings[cam] = {
+                        "ratio": ratio,
+                        "pad_x": pad_x,
+                        "pad_y": pad_y,
+                        "predictor_test_size": list(predictor.test_size),
+                        "rgb_means":predictor.rgb_means.tolist(),
+                        "std": predictor.std.tolist()
+                    }
+
                 outputs, img_info = predictor.inference(img_data, img_preproc, ratio, timer)
+
+                # Save rescaled and padded images if requested
+                for i in range(len(img_data)):
+                    if args.save_rescaled:
+                        rescaled_img = cv2.resize(img_data[i], (int(img_data[i].shape[1] * ratio), int(img_data[i].shape[0] * ratio)))
+                        rescaled_img_path = osp.join(rescaled_path, f"{cam}_frame_{id_data[i]:04d}_rescaled.jpg")
+                        cv2.imwrite(rescaled_img_path, rescaled_img)
+
+                    if args.save_padded:
+                        padded_img = img_preproc[i].transpose(1, 2, 0) * 255.0
+                        padded_img = padded_img[:, :, ::-1].astype(np.uint8)
+                        padded_img_path = osp.join(padded_path, f"{cam}_frame_{id_data[i]:04d}_padded.jpg")
+                        cv2.imwrite(padded_img_path, padded_img)
+
                 outputs = outputs
                 for out_id in range(len(outputs)):
                     out_item = outputs[out_id]
@@ -240,19 +286,24 @@ def image_demo(predictor, vis_folder, current_time, args,scene):
                     if out_item is not None:
                         detections = out_item[:, :7].cpu().numpy()
                         detections[:, :4] /= scale
-                        detections = detections[detections[:,4]>0.1]
+                        detections = detections[detections[:, 4] > 0.1]
 
                     for det in detections:
-                        x1,y1,x2,y2,score,_,_ = det
-                        results.append([cam,id_data[out_id],1,int(x1),int(y1),int(x2),int(y2),score])
-                        
+                        x1, y1, x2, y2, score, _, _ = det
+                        results.append([cam, id_data[out_id], 1, int(x1), int(y1), int(x2), int(y2), score])
+
                 timer.toc()
-        
+
         pbar.close()
-        output_file = osp.join(out_path,cam+'.txt')
-        with open(output_file,'w') as f:
-            for cam,frame_id,cls,x1,y1,x2,y2,score in results:
-                f.write('{},{},{},{},{},{},{}\n'.format(frame_id,cls,x1,y1,x2,y2,score))
+        output_file = osp.join(out_path, cam + '.txt')
+        with open(output_file, 'w') as f:
+            for cam, frame_id, cls, x1, y1, x2, y2, score in results:
+                f.write('{},{},{},{},{},{},{}\n'.format(frame_id, cls, x1, y1, x2, y2, score))
+
+    # Save ratios and paddings to a JSON file
+    with open(json_path, 'w') as json_file:
+        json.dump(ratios_and_paddings, json_file, indent=4)
+
 
 def main(exp, args,scene):
     if not args.experiment_name:
