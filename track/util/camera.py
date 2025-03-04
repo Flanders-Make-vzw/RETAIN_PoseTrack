@@ -9,6 +9,7 @@ import aic_cpp
 
 class Camera():
     def __init__(self,calib_data):
+        self.camera_serial = calib_data["camera_serial"]
 
         self.project_mat = np.array(calib_data["camera projection matrix"])
         self.homo_mat = np.array(calib_data["homography matrix"])
@@ -27,7 +28,8 @@ class Camera():
         self.idx_int = calib_data["idx"]
 
     @staticmethod
-    def from_colruyt_calib(calib_data):
+    def from_colruyt_calib(calib_data, idx):
+        
         s = calib_data["intrinsics"]["camera_matrix"]["s"]
         w = calib_data["image_size"]["w"]
         h = calib_data["image_size"]["h"]
@@ -42,10 +44,19 @@ class Camera():
                 [0, 1, 0],
                 [0, 0, 1]
             ],
-            "idx": calib_data["camera_serial"]
+            "idx": idx,
+            "camera_serial": calib_data["camera_serial"],
         }
         camera = Camera(processed_calib_data)
         return camera
+
+    def to_dict(self):
+        return {
+            "camera_serial": self.camera_serial,
+            "camera projection matrix": self.project_mat.tolist(),
+            "homography matrix": self.homo_mat.tolist(),
+            "idx": self.idx_int,
+        }
 
 def cross(R,V):
     h = [R[1] * V[2] - R[2] * V[1],

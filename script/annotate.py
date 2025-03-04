@@ -1,4 +1,5 @@
 from collections import defaultdict
+import json
 from pathlib import Path
 import cv2
 import numpy as np
@@ -179,8 +180,153 @@ def load_reid(reid_path):
     return reid_data
 
 
-def load_track(track_path):
-    pass
+def load_track(track_path, video_dir_path, camera_calib_path, output_path=None, detection_goal_size=(800, 1440)):
+    """Load and extract the images for each track into a seperate track folder.
+    Args:
+        track_path (str): Path to the track data text file.
+        video_dir_path (str): Path to the directory containing video files
+        camera_tracks (dict, optional): Dictionary to store camera calibration.
+            - Each camera has a camera idx and IP serial (corresponding to the video file name).
+            Ex: 10.48.26.1 corresponds to {video_dir_path}/10_48_26_1/video.mp4
+            
+    Returns:
+        None
+        
+    
+    Each track (.txt) contains 
+    - Camera_id
+    - Track id 
+    - Frame_id 
+    - Bounding box: (x, y, width, height) 
+    - 3D coordinates: (x, y, z)
+    For example: 1.000000000000000000e+00 1.000000000000000000e+00 3.000000000000000000e+00 2.760000000000000000e+02 2.700000000000000000e+02 9.000000000000000000e+01 2.310000000000000000e+02 3.210000000000000000e+02 5.010000000000000000e+02 1.000000000000000000e+00
+    Corresponds to:
+    - Camera_id: 1
+    - Track id: 1
+    - Frame_id: 3
+    - bbox: (276, 270, 90, 231)
+    - Track.output_cord: (321, 501, 1)
+    """
+
+    goal_height, goal_width = detection_goal_size
+
+    # Create output directory if provided
+    if output_path:
+        output_path = Path(output_path)
+        output_path.mkdir(parents=True, exist_ok=True)
+    
+    # Load track data from file
+    try:
+        track_data = np.loadtxt(track_path)
+    except Exception as e:
+        print(f"Error loading track file {track_path}: {e}")
+        return {}
+    
+    # Handle single line case
+    if track_data.ndim == 1:
+        track_data = track_data.reshape(1, -1)
+    
+    # Group tracks by track ID
+    tracks_by_id = defaultdict(list)
+    for row in track_data:
+        
+        camera_id = int(row[0])
+        track_id = int(row[1])
+        frame_id = int(row[2])
+        bbox = row[3:7]  # x, y, width, height
+        pos_3d = row[7:10]  # x, y, z
+        print("Camera ID: ", camera_id)
+        print("Track ID: ", track_id)
+        print("Frame ID: ", frame_id)
+        print("Bounding box: ", bbox)
+        print("3D position: ", pos_3d)
+        
+        tracks_by_id[track_id].append({
+            'camera_id': camera_id,
+            'frame_id': frame_id,
+            'bbox': bbox,
+            'pos_3d': pos_3d
+        })
+    # print("Tracks by ID: ", tracks_by_id)
+    print("Number of tracks: ", len(tracks_by_id))
+    for track_id, frames in tracks_by_id.items():
+        print(f"Track ID: {track_id}, Number of frames: {len(frames)}")
+    
+    try:
+        with open(camera_calib_path, 'r') as f:
+            camera_calibs = json.load(f)
+    except Exception as e:  
+        print(f"Error loading camera calibration file {camera_calib_path}: {e}")
+        return tracks_by_id
+    
+    # Extract frames for each track if output_path is provided
+    if output_path:
+        for track_id, frames in tracks_by_id.items():
+            track_dir = output_path / f"track_{track_id}"
+            track_dir.mkdir(exist_ok=True)
+            
+            # Group by camera
+            by_camera = {}
+            for frame in frames:
+                camera_id = frame['camera_id']
+                if camera_id not in by_camera:
+                    by_camera[camera_id] = []
+                by_camera[camera_id].append(frame)
+            
+            # Process each camera
+            for camera_id, camera_frames in by_camera.items():
+                # Find camera serial from calibration data
+                camera_serial = None
+                for cam_info in camera_calibs:
+                    if cam_info.get('idx') == camera_id -1:  # Index might be 0-based
+                        camera_serial = cam_info.get('camera_serial')
+                        break
+                
+                if not camera_serial:
+                    print(f"Warning: Camera ID {camera_id} not found in calibration data")
+                    continue
+                
+                # Convert serial number format: 10.48.26.1 -> 10_48_26_1
+                camera_folder = camera_serial.replace('.', '_')
+                video_path = video_dir_path / camera_folder / "video.mp4"
+                
+                if not video_path.exists():
+                    print(f"Warning: Video file not found at {video_path}")
+                    continue
+                
+                # Open video and extract frames
+                cap = cv2.VideoCapture(str(video_path))
+                # get video size
+                input_size = (int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT)), int(cap.get(cv2.CAP_PROP_FRAME_WIDTH)))
+                video_width = input_size[1]
+                video_height = input_size[0]
+                bbox_scale = min(video_height/ goal_height, video_width/goal_width)
+
+                assert cap.isOpened(), f"Error: Could not open video {video_path}"
+                
+                for frame in sorted(camera_frames, key=lambda x: x['frame_id']):
+                    frame_id = frame['frame_id']
+                    bbox = frame['bbox']
+                    
+                    # Set video position to frame
+                    cap.set(cv2.CAP_PROP_POS_FRAMES, frame_id)
+                    ret, img = cap.read()
+                    
+                    if not ret:
+                        print(f"Warning: Could not read frame {frame_id} from video {video_path}")
+                        continue
+                    
+                    # Draw bounding box
+                    x, y, w, h = [int(v) for v in bbox]
+                    cv2.rectangle(img, (x, y), (x+w, y+h), (0, 255, 0), 2)
+                    
+                    # Save frame
+                    output_file = track_dir / f"{camera_serial}_frame{frame_id}.jpg"
+                    cv2.imwrite(str(output_file), img)
+                
+                cap.release()
+    
+    return tracks_by_id
 
 def annotate_detection(video_path, bbox_path, pose_path=None, show_video=False, detection_goal_size=(800, 1440), output_path=None, conf_threshold=0.1):
     """
@@ -336,7 +482,7 @@ def debug_annotation(show_video=False):
     camera = "cam_0001"
     
     scene = "scene_002"
-    camera = "10_48_26_1"
+    camera = "10_48_26_2"
     video_path=None
     bbox_path=None
     pose_path=None
@@ -353,15 +499,23 @@ def debug_annotation(show_video=False):
     bbox_path=bbox_results_path / scene / (camera + ".txt")
     pose_path=pose_results_path / scene / (camera + ".txt")
     reid_path=reid_results_path / scene / (camera + ".npy")
-    track_path=reid_results_path / scene / (camera + ".txt")
+    track_path=track_results_path / (scene + ".txt")
+    camera_calib_path=track_results_path / (scene + ".json")
+    track_images_output_path = Path("/mnt/shared_disk/code_projects/Retain_asset_reID/PoseTrack/result/track_images/" + scene)
+    print("Track output:", track_images_output_path)
 
     detection_goal_size = (800, 1440)
 
     # load reid => feature vector of identified individuals
-    reid = load_reid(reid_path)
+    # reid = load_reid(reid_path)
     
     # load 
-    track = load_track(track_path)
+    track = load_track(
+        track_path=track_path, 
+        video_dir_path=dataset_path / scene, 
+        camera_calib_path=camera_calib_path,
+        output_path=track_images_output_path
+        )
 
     # annotate_detection(
     #     video_path=video_path,

@@ -84,7 +84,7 @@ cpu_nums_per_item=4 #cpu_nums_per_item >= 1
 If this does not work, just use the python function directly. Parameters need to be tuned!
 
 ```Bash
-python3 detection/get_detection.py --scene 1  --with-reid --fast-reid-config fast_reid/configs/MOT17/sbs_S50.yml --fast-reid-weights pretrained/mot17_sbs_S50.pth --proximity_thresh 0.5 --appearance_thresh 0.25
+python3 detection/get_detection.py --scene 2  --with-reid --fast-reid-config fast_reid/configs/MOT17/sbs_S50.yml --fast-reid-weights pretrained/mot17_sbs_S50.pth --proximity_thresh 0.5 --appearance_thresh 0.25 --save_processed_img --save_annotated_img
 ```
 
 ### 3. Pose Estimation

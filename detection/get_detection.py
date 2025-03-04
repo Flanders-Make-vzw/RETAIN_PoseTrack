@@ -19,6 +19,19 @@ from utils.timer import Timer
 from tqdm import tqdm
 
 
+def pad_and_resize(image, input_size):
+    padded_img = np.full((len(image), *input_size, 3), 114, dtype=np.uint8)
+    img = np.array(image)
+    r = min(input_size[0] / img.shape[1], input_size[1] / img.shape[2])
+    for i in range(img.shape[0]):
+        resized_img = cv2.resize(
+            img[i],  # Keep original BGR format
+            (int(img[i].shape[1] * r), int(img[i].shape[0] * r)),
+            interpolation=cv2.INTER_LINEAR
+        )
+        padded_img[i, : resized_img.shape[0], : resized_img.shape[1]] = resized_img
+    return padded_img, r
+    
 def preproc(image, input_size, mean, std, swap=(0,3,1,2)):
     padded_img = np.full((len(image), *input_size, 3), 114, dtype=np.uint8)
     img = np.array(image)
@@ -67,8 +80,8 @@ def make_parser():
     parser.add_argument("--batchsize",default=1, type=int, help="batchsize")
     
     # New arguments for saving images
-    parser.add_argument("--save_rescaled", action="store_true", help="Save rescaled images")
-    parser.add_argument("--save_padded", action="store_true", help="Save padded images")
+    parser.add_argument("--save_processed_img", action="store_true", help="Save padded images")
+    parser.add_argument("--save_annotated_img", action="store_true", help="Save annotated images")
 
     # tracking args
     parser.add_argument("--track_high_thresh", type=float, default=0.6, help="tracking confidence threshold")
@@ -115,6 +128,28 @@ def write_results(filename, results):
                 f.write(line)
     logger.info('save results to {}'.format(filename))
 
+
+def annotate_bbox_img_padded(img, results, save_path):
+
+    # Convert RGB to BGR for OpenCV
+    img = cv2.cvtColor(img, cv2.COLOR_RGB2BGR)
+
+    for result in results:
+        # Adjust indexing based on your detection format
+        x1, y1, x2, y2, conf, _, _ = result  # Use correct indices
+        cv2.rectangle(img, (int(x1), int(y1)), (int(x2), int(y2)), (0, 255, 0), 2)
+        cv2.putText(img, f'{conf:.2f}', (int(x1), int(y1) - 5),
+                   cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 1)
+    
+    cv2.imwrite(save_path, img)
+
+def annotate_bbox_img(img, results, save_path):
+    for result in results:
+        x1, y1, x2, y2, conf, _, _ = result
+        cv2.rectangle(img, (int(x1), int(y1)), (int(x2), int(y2)), (0, 255, 0), 2)
+        cv2.putText(img, f'{conf:.2f}', (int(x1), int(y1) - 5), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 1)
+
+    cv2.imwrite(save_path, img)
 
 class Predictor(object):
     def __init__(
@@ -180,18 +215,12 @@ def image_demo(predictor, vis_folder, current_time, args, scene):
 
     input = osp.join(root_path, 'dataset/test', 'scene_0' + "{:02d}".format(scene))
     out_path = osp.join(root_path, 'result/detection', 'scene_0' + "{:02d}".format(scene))
+    annotation_out_path = osp.join(root_path, 'result/annotated', 'scene_0' + "{:02d}".format(scene))
 
-    rescaled_path = osp.join(out_path, 'rescaled')
-    padded_path = osp.join(out_path, 'padded')
     json_path = osp.join(out_path, 'ratios_and_paddings.json')
 
     if not os.path.exists(out_path):
         os.makedirs(out_path)
-    if args.save_rescaled and not os.path.exists(rescaled_path):
-        os.makedirs(rescaled_path)
-    if args.save_padded and not os.path.exists(padded_path):
-        os.makedirs(padded_path)
-
     cameras = sorted(os.listdir(input))
     scale = min(800 / 1080, 1440 / 1920)
     # print("Predictor test size:", predictor.test_size)
@@ -203,10 +232,22 @@ def image_demo(predictor, vis_folder, current_time, args, scene):
     # print(cameras)
     ratios_and_paddings = {}
     for cam in cameras:
+        
         if int(cam.split('_')[1]) < 0:
             continue
+        
+        processed_path = osp.join(annotation_out_path, cam, 'processed')
+        annotated_path = osp.join(annotation_out_path, cam, 'annotated')
+
+        if args.save_processed_img and not os.path.exists(processed_path):
+            os.makedirs(processed_path)
+        if args.save_annotated_img and not os.path.exists(annotated_path):
+            os.makedirs(annotated_path)
+
         frame_id = 0
         results = []
+        unscaled_results = []
+        ratio_results = []
         # print(cam)
         video_path = osp.join(input, cam, 'video.mp4')
         cap = cv2.VideoCapture(video_path)
@@ -249,53 +290,86 @@ def image_demo(predictor, vis_folder, current_time, args, scene):
                 # Detect objects
                 img_preproc, ratio = preproc_worker(img_data)
 
-                # Calculate padding
-                pad_x = (predictor.test_size[1] - img_data[0].shape[1] * ratio) / 2
-                pad_y = (predictor.test_size[0] - img_data[0].shape[0] * ratio) / 2
+                outputs, img_info = predictor.inference(img_data, img_preproc, ratio, timer)
+                
+                # # apply same rescaling and padding as in preproc to a new image
+                img_rescaled, ratio2 = pad_and_resize(img_data, predictor.test_size)
 
                 # Store ratio and padding for the current camera
                 if cam not in ratios_and_paddings:
                     ratios_and_paddings[cam] = {
                         "ratio": ratio,
-                        "pad_x": pad_x,
-                        "pad_y": pad_y,
+                        "scale": scale,
                         "predictor_test_size": list(predictor.test_size),
                         "rgb_means":predictor.rgb_means.tolist(),
-                        "std": predictor.std.tolist()
+                        "std": predictor.std.tolist(),
+                        "img_info_ratio": img_info["ratio"],
+                        "img_info_width": img_info["width"],
+                        "img_info_height": img_info["height"],
                     }
 
-                outputs, img_info = predictor.inference(img_data, img_preproc, ratio, timer)
 
                 # Save rescaled and padded images if requested
-                for i in range(len(img_data)):
-                    if args.save_rescaled:
-                        rescaled_img = cv2.resize(img_data[i], (int(img_data[i].shape[1] * ratio), int(img_data[i].shape[0] * ratio)))
-                        rescaled_img_path = osp.join(rescaled_path, f"{cam}_frame_{id_data[i]:04d}_rescaled.jpg")
-                        cv2.imwrite(rescaled_img_path, rescaled_img)
+                assert len(img_data) == len(outputs), f"#img_data {len(img_data)} != #outputs {len(outputs)}"
 
-                    if args.save_padded:
-                        padded_img = img_preproc[i].transpose(1, 2, 0) * 255.0
-                        padded_img = padded_img[:, :, ::-1].astype(np.uint8)
-                        padded_img_path = osp.join(padded_path, f"{cam}_frame_{id_data[i]:04d}_padded.jpg")
-                        cv2.imwrite(padded_img_path, padded_img)
-
-                outputs = outputs
                 for out_id in range(len(outputs)):
                     out_item = outputs[out_id]
                     detections = []
+                    unscaled_detections = []
+                    ratio_detections = []
+
                     if out_item is not None:
                         detections = out_item[:, :7].cpu().numpy()
                         detections[:, :4] /= scale
                         detections = detections[detections[:, 4] > 0.1]
 
+                        # apply correct ratio to bounding boxes
+                        ratio_detections = out_item[:, :7].cpu().numpy()
+                        ratio_detections[:, :4] /= ratio
+                        ratio_detections = ratio_detections[ratio_detections[:, 4] > 0.1]
+
+                        unscaled_detections = out_item[:, :7].cpu().numpy()
+                        unscaled_detections = unscaled_detections[unscaled_detections[:, 4] > 0.1]
+
+                    if args.save_annotated_img:
+                        # take copy of image
+                        img_copy = img_data[out_id].copy()
+                        # annotate image
+                        annotated_img_path = osp.join(annotated_path, f"{cam}_frame_{id_data[out_id]:04d}_annotated.jpg")
+                        # annotate unscaled bounding boxes with confidence scores on image without rescaling
+                        annotate_bbox_img(img_copy, ratio_detections, annotated_img_path)
+
+                    if args.save_processed_img:
+                        processed_img_path = osp.join(processed_path, f"{cam}_frame_{id_data[out_id]:04d}_rescaled.jpg")
+                        # annotate scaled bounding boxes with confidence scores on image with rescaling
+                        annotate_bbox_img_padded(img_rescaled[out_id], unscaled_detections, processed_img_path)
+
+                    for det in ratio_detections:
+                        x1, y1, x2, y2, score, _, _ = det
+                        ratio_results.append([cam, id_data[out_id], 0, int(x1), int(y1), int(x2), int(y2), score])
+                    
                     for det in detections:
                         x1, y1, x2, y2, score, _, _ = det
                         results.append([cam, id_data[out_id], 1, int(x1), int(y1), int(x2), int(y2), score])
 
+                    for det in unscaled_detections:
+                        x1, y1, x2, y2, score, _, _ = det
+                        unscaled_results.append([cam, id_data[out_id], 1, int(x1), int(y1), int(x2), int(y2), score])
+
                 timer.toc()
 
         pbar.close()
-        output_file = osp.join(out_path, cam + '.txt')
+        output_file = osp.join(out_path, cam + '_ratio.txt')
+        with open(output_file, 'w') as f:
+            for cam, frame_id, cls, x1, y1, x2, y2, score in ratio_results:
+                f.write('{},{},{},{},{},{},{}\n'.format(frame_id, cls, x1, y1, x2, y2, score))
+
+        output_file = osp.join(out_path, cam + '_unscaled.txt')
+        with open(output_file, 'w') as f:
+            for cam, frame_id, cls, x1, y1, x2, y2, score in unscaled_results:
+                f.write('{},{},{},{},{},{},{}\n'.format(frame_id, cls, x1, y1, x2, y2, score))
+                
+                output_file = osp.join(out_path, cam + '_scaled.txt')
         with open(output_file, 'w') as f:
             for cam, frame_id, cls, x1, y1, x2, y2, score in results:
                 f.write('{},{},{},{},{},{},{}\n'.format(frame_id, cls, x1, y1, x2, y2, score))

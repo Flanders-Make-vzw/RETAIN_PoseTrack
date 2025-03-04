@@ -9,6 +9,7 @@ result/reid/*
 result/track/*
 result/track_log/*
 result/annotated/*
+result/track_images/*
 
 ckpt_weight/*
 
