@@ -1,3 +1,4 @@
+from pathlib import Path
 import sys
 import argparse
 import os
@@ -32,6 +33,11 @@ def pad_and_resize(image, input_size):
     return padded_img, r
     
 def preproc(image, input_size, mean, std, swap=(0,3,1,2)):
+    actual_batch_size = len(image)
+    original_batch_size = mean.shape[0]
+    if actual_batch_size != original_batch_size:
+        print("Warning: batch size of input images and mean/std do not match. Using the first image in the mean/std.")
+
     padded_img = np.full((len(image), *input_size, 3), 114, dtype=np.uint8)
     img = np.array(image)
     r = min(input_size[0] / img.shape[1], input_size[1] / img.shape[2])
@@ -45,11 +51,13 @@ def preproc(image, input_size, mean, std, swap=(0,3,1,2)):
     # padded_img = padded_img[:,:, :, ::-1]
     padded_img = padded_img / np.float32(255.0)
 
-    if mean is not None:
-        padded_img -= mean
+    if mean is not None: 
+        actual_mean = np.tile(mean[0:1,:,:,:], (actual_batch_size, 1, 1, 1))
+        padded_img -= actual_mean
     if std is not None:
-        padded_img /= std
-        
+        actual_std = np.tile(std[0:1,:,:,:], (actual_batch_size, 1, 1, 1))
+        padded_img /= actual_std
+
     padded_img = padded_img.transpose(swap)
     padded_img = np.ascontiguousarray(padded_img, dtype=np.float32)
     return padded_img, r
@@ -58,8 +66,13 @@ IMAGE_EXT = [".jpg", ".jpeg", ".webp", ".bmp", ".png"]
 
 
 def make_parser():
+
+    
     parser = argparse.ArgumentParser("BoT-SORT Demo!")
-    parser.add_argument("--scene", type=int, default=88,help='scene number')
+    # parser.add_argument("--scene", type=str, default=None, help='scene name')
+    parser.add_argument("--input", type=str, default=None, help='input')
+    parser.add_argument("--output", type=str, default=None, help='output')
+    parser.add_argument("--annotated_output", type=str, default=None, help='Annotated images output')
     #parser.add_argument("demo", default="image", help="demo type, eg. image, video and webcam")
     parser.add_argument("-expn", "--experiment-name", type=str, default=None)
     parser.add_argument("-n", "--name", type=str, default=None, help="model name")
@@ -77,8 +90,6 @@ def make_parser():
     parser.add_argument("--fuse", dest="fuse", default=False, action="store_true", help="Fuse conv and bn for testing.")
     parser.add_argument("--trt", dest="trt", default=False, action="store_true", help="Using TensorRT model for testing.")
     parser.add_argument("--batchsize",default=1, type=int, help="batchsize")
-    # only process specific cameras
-    parser.add_argument("--cameras", default=None, type=str, help="cameras to process")
     # only process specific frames
     parser.add_argument("--frames", default=None, type=str, help="frames to process")
 
@@ -212,28 +223,18 @@ class Predictor(object):
 
 
 def image_demo(predictor, vis_folder, current_time, args, scene):
-    current_file_path = os.path.abspath(__file__)
-    path_arr = current_file_path.split('/')[:-2]
-    root_path = '/'.join(path_arr)
 
-    input = osp.join(root_path, 'dataset/test', 'scene_0' + "{:02d}".format(scene))
-    out_path = osp.join(root_path, 'result/detection', 'scene_0' + "{:02d}".format(scene))
-    annotation_out_path = osp.join(root_path, 'result/annotated', 'scene_0' + "{:02d}".format(scene))
+    input = args.input
+    out_path = args.output
+    annotation_out_path = args.annotated_output
 
     json_path = osp.join(out_path, 'ratios_and_paddings.json')
 
     if not os.path.exists(out_path):
         os.makedirs(out_path)
+
     cameras = sorted(os.listdir(input))
 
-    # only process specific cameras
-    if args.cameras is not None:
-        cameras = []
-        for cam in cameras:
-            if cam in args.cameras.split(','):
-                cameras.append(cam)
-            else:
-                print(f"Skipping camera {cam}")
     # only process specific frames
     selected_frames = None
     if args.frames is not None:
@@ -252,8 +253,9 @@ def image_demo(predictor, vis_folder, current_time, args, scene):
     ratios_and_paddings = {}
 
     for cam in cameras:
-        processed_path = osp.join(annotation_out_path, cam, 'processed')
-        annotated_path = osp.join(annotation_out_path, cam, 'annotated')
+        base_cam_name = cam.replace('.mp4', '')
+        processed_path = osp.join(annotation_out_path, base_cam_name, 'processed')
+        annotated_path = osp.join(annotation_out_path, base_cam_name, 'annotated')
 
         if args.save_processed_img and not os.path.exists(processed_path):
             os.makedirs(processed_path)
@@ -265,7 +267,7 @@ def image_demo(predictor, vis_folder, current_time, args, scene):
         unscaled_results = []
         ratio_results = []
         # print(cam)
-        video_path = osp.join(input, cam, 'video.mp4')
+        video_path = osp.join(input, cam)
         cap = cv2.VideoCapture(video_path)
         timer = Timer()
         memory_bank = []
@@ -354,12 +356,10 @@ def image_demo(predictor, vis_folder, current_time, args, scene):
                         annotate_bbox_img(img_copy, ratio_detections, annotated_img_path)
                         del img_copy
 
-
                     if args.save_processed_img:
                         processed_img_path = osp.join(processed_path, f"{cam}_frame_{id_data[out_id]:04d}_rescaled.jpg")
                         # annotate scaled bounding boxes with confidence scores on image with rescaling
                         annotate_bbox_img_padded(img_rescaled[out_id], unscaled_detections, processed_img_path)
-                        
 
                     for ratio_det, det, unscaled_det in zip(ratio_detections, detections, unscaled_detections):
                         x1, y1, x2, y2, score, _, _ = ratio_det
@@ -414,7 +414,7 @@ def image_demo(predictor, vis_folder, current_time, args, scene):
         json.dump(ratios_and_paddings, json_file, indent=4)
 
 
-def main(exp, args,scene):
+def main(exp, args, scene):
     if not args.experiment_name:
         args.experiment_name = exp.exp_name
 
@@ -473,8 +473,20 @@ def main(exp, args,scene):
 if __name__ == "__main__":
     args = make_parser().parse_args()
     exp = get_exp(args.exp_file, args.name)
+    
+    scene = Path(args.input).name
+    current_file_path = os.path.abspath(__file__)
+    path_arr = current_file_path.split('/')[:-2]
+    root_path = '/'.join(path_arr)
+    
+    if args.output is None:
+        out_path = osp.join(root_path, 'result/detection', scene)
+        args.output = out_path
+    if args.annotated_output is None:
+        annotation_out_path = osp.join(root_path, 'result/annotated', scene)
+        args.annotated_output = annotation_out_path
 
     args.ablation = False
     args.mot20 = not args.fuse_score
 
-    main(exp, args,args.scene)
+    main(exp, args, scene)

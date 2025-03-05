@@ -90,12 +90,12 @@ If this does not work, just use the python function directly. Parameters need to
 ```
 
 ```Bash
-python3 detection/get_detection.py --scene 2  --proximity_thresh 0.5 --appearance_thresh 0.25 --fuse --save_processed_img --save_annotated_img --batchsize 8
+python3 detection/get_detection.py --scene 2  --proximity_thresh 0.5 --appearance_thresh 0.25 --fuse --save_processed_img --save_annotated_img --batchsize 16
 ```
 
 **Saving the annotated images:**
 ```Bash
-python3 detection/get_detection.py --scene 2 --proximity_thresh 0.5 --appearance_thresh 0.25 --fuse --conf 0.1 --tsize 640 --track_high_thresh 0.5 --batchsize 8 --save_processed_img --save_annotated_img
+python3 detection/get_detection.py --input /mnt/shared_disk/code_projects/Retain_asset_reID/PoseTrack/dataset/test/slim_people_tracking_data_entrance_checkout_first_isles --proximity_thresh 0.5 --appearance_thresh 0.25 --fuse --conf 0.1 --tsize 640 --track_high_thresh 0.5 --batchsize 16 --save_processed_img --save_annotated_img
 ```
 
 Todos:
