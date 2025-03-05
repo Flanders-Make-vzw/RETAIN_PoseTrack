@@ -7,7 +7,6 @@ import cv2
 import torch
 import numpy as np
 import json
-
 from loguru import logger
 
 sys.path.append('detection')
@@ -78,7 +77,11 @@ def make_parser():
     parser.add_argument("--fuse", dest="fuse", default=False, action="store_true", help="Fuse conv and bn for testing.")
     parser.add_argument("--trt", dest="trt", default=False, action="store_true", help="Using TensorRT model for testing.")
     parser.add_argument("--batchsize",default=1, type=int, help="batchsize")
-    
+    # only process specific cameras
+    parser.add_argument("--cameras", default=None, type=str, help="cameras to process")
+    # only process specific frames
+    parser.add_argument("--frames", default=None, type=str, help="frames to process")
+
     # New arguments for saving images
     parser.add_argument("--save_processed_img", action="store_true", help="Save padded images")
     parser.add_argument("--save_annotated_img", action="store_true", help="Save annotated images")
@@ -158,7 +161,7 @@ class Predictor(object):
         exp,
         trt_file=None,
         decoder=None,
-        device=torch.device("cpu"),
+        device="cpu",
         fp16=False,
         batchsize=1
     ):
@@ -192,7 +195,7 @@ class Predictor(object):
         height, width = img.shape[1:3]
         img_info["height"] = height
         img_info["width"] = width
-        img_info["raw_img"] = raw_img
+        # img_info["raw_img"] = raw_img
         # img, ratio = preproc(img, self.test_size, self.rgb_means, self.std)
         img_info["ratio"] = ratio
         img = torch.from_numpy(img).float().to(self.device, non_blocking=True)
@@ -222,8 +225,24 @@ def image_demo(predictor, vis_folder, current_time, args, scene):
     if not os.path.exists(out_path):
         os.makedirs(out_path)
     cameras = sorted(os.listdir(input))
+
+    # only process specific cameras
+    if args.cameras is not None:
+        cameras = []
+        for cam in cameras:
+            if cam in args.cameras.split(','):
+                cameras.append(cam)
+            else:
+                print(f"Skipping camera {cam}")
+    # only process specific frames
+    selected_frames = None
+    if args.frames is not None:
+        selected_frames = []
+        for frame in args.frames.split(','):
+            selected_frames.append(int(frame))
+        print(f"Selected frames: {selected_frames}")
+
     scale = min(800 / 1080, 1440 / 1920)
-    # print("Predictor test size:", predictor.test_size)
 
     def preproc_worker(img):
         return preproc(img, predictor.test_size, predictor.rgb_means, predictor.std)
@@ -231,11 +250,8 @@ def image_demo(predictor, vis_folder, current_time, args, scene):
     batchsize = args.batchsize
     # print(cameras)
     ratios_and_paddings = {}
+
     for cam in cameras:
-        
-        if int(cam.split('_')[1]) < 0:
-            continue
-        
         processed_path = osp.join(annotation_out_path, cam, 'processed')
         annotated_path = osp.join(annotation_out_path, cam, 'annotated')
 
@@ -264,8 +280,11 @@ def image_demo(predictor, vis_folder, current_time, args, scene):
                 end_flag = True
 
             if not end_flag:
-                memory_bank.append(frame)
-                id_bank.append(frame_id)
+                # Check if selected_frames is None (process all frames)
+                # or if the current frame_id is in the selected_frames list
+                if selected_frames is None or frame_id in selected_frames:
+                    memory_bank.append(frame)
+                    id_bank.append(frame_id)
 
             frame_id += 1
             pbar.update(1)
@@ -291,7 +310,7 @@ def image_demo(predictor, vis_folder, current_time, args, scene):
                 img_preproc, ratio = preproc_worker(img_data)
 
                 outputs, img_info = predictor.inference(img_data, img_preproc, ratio, timer)
-                
+
                 # # apply same rescaling and padding as in preproc to a new image
                 img_rescaled, ratio2 = pad_and_resize(img_data, predictor.test_size)
 
@@ -301,11 +320,6 @@ def image_demo(predictor, vis_folder, current_time, args, scene):
                         "ratio": ratio,
                         "scale": scale,
                         "predictor_test_size": list(predictor.test_size),
-                        "rgb_means":predictor.rgb_means.tolist(),
-                        "std": predictor.std.tolist(),
-                        "img_info_ratio": img_info["ratio"],
-                        "img_info_width": img_info["width"],
-                        "img_info_height": img_info["height"],
                     }
 
 
@@ -338,41 +352,62 @@ def image_demo(predictor, vis_folder, current_time, args, scene):
                         annotated_img_path = osp.join(annotated_path, f"{cam}_frame_{id_data[out_id]:04d}_annotated.jpg")
                         # annotate unscaled bounding boxes with confidence scores on image without rescaling
                         annotate_bbox_img(img_copy, ratio_detections, annotated_img_path)
+                        del img_copy
+
 
                     if args.save_processed_img:
                         processed_img_path = osp.join(processed_path, f"{cam}_frame_{id_data[out_id]:04d}_rescaled.jpg")
                         # annotate scaled bounding boxes with confidence scores on image with rescaling
                         annotate_bbox_img_padded(img_rescaled[out_id], unscaled_detections, processed_img_path)
+                        
 
-                    for det in ratio_detections:
-                        x1, y1, x2, y2, score, _, _ = det
+                    for ratio_det, det, unscaled_det in zip(ratio_detections, detections, unscaled_detections):
+                        x1, y1, x2, y2, score, _, _ = ratio_det
                         ratio_results.append([cam, id_data[out_id], 0, int(x1), int(y1), int(x2), int(y2), score])
-                    
-                    for det in detections:
                         x1, y1, x2, y2, score, _, _ = det
                         results.append([cam, id_data[out_id], 1, int(x1), int(y1), int(x2), int(y2), score])
-
-                    for det in unscaled_detections:
-                        x1, y1, x2, y2, score, _, _ = det
+                        x1, y1, x2, y2, score, _, _ = unscaled_det
                         unscaled_results.append([cam, id_data[out_id], 1, int(x1), int(y1), int(x2), int(y2), score])
 
+                    del detections
+                    del unscaled_detections
+                    del ratio_detections
+
                 timer.toc()
+            
+            
+
+        # clear memory
+        del img_data
+        del img_preproc
+        del img_rescaled
+        del outputs
+        del img_info
+
+        torch.cuda.empty_cache()  # Clear CUDA cache
+        cap.release()
 
         pbar.close()
         output_file = osp.join(out_path, cam + '_ratio.txt')
         with open(output_file, 'w') as f:
             for cam, frame_id, cls, x1, y1, x2, y2, score in ratio_results:
                 f.write('{},{},{},{},{},{},{}\n'.format(frame_id, cls, x1, y1, x2, y2, score))
+        ratio_results.clear()  # Clear the list after writing
+
 
         output_file = osp.join(out_path, cam + '_unscaled.txt')
         with open(output_file, 'w') as f:
             for cam, frame_id, cls, x1, y1, x2, y2, score in unscaled_results:
                 f.write('{},{},{},{},{},{},{}\n'.format(frame_id, cls, x1, y1, x2, y2, score))
-                
-                output_file = osp.join(out_path, cam + '_scaled.txt')
+        unscaled_results.clear()  # Clear the list after writing
+
+        output_file = osp.join(out_path, cam + '_scaled.txt')
+
         with open(output_file, 'w') as f:
             for cam, frame_id, cls, x1, y1, x2, y2, score in results:
                 f.write('{},{},{},{},{},{},{}\n'.format(frame_id, cls, x1, y1, x2, y2, score))
+        results.clear()  # Clear the list after writing
+
 
     # Save ratios and paddings to a JSON file
     with open(json_path, 'w') as json_file:
@@ -431,7 +466,7 @@ def main(exp, args,scene):
 
     predictor = Predictor(model, exp, trt_file, decoder, args.device, args.fp16,args.batchsize)
     current_time = time.localtime()
-    
+
     image_demo(predictor, None, current_time, args,scene)
 
 
