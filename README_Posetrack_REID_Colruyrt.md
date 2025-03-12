@@ -109,6 +109,12 @@ Todos:
 python3 mmpose/demo/save_pose_with_det_multiscene.py mmpose/demo/mmdetection_cfg/faster_rcnn_r50_fpn_coco.py https://download.openxlab.org.cn/models/mmdetection/FasterR-CNN/weight/faster-rcnn_r50_fpn_1x_coco mmpose/configs/body_2d_keypoint/topdown_heatmap/coco/td-hm_hrnet-w32_8xb64-210e_coco-256x192.py ckpt_weight/td-hm_hrnet-w32_8xb64-210e_coco-256x192-81c58e40_20220909.pth --input dataset/test/scene_002 --output-root result/pose/scene_002 --draw-bbox --show-kpt-idx --start 1 --end 3
 ```
 
+**For single camera pose estimation:**
+
+```Bash
+python3 mmpose/demo/save_pose_with_det_single_scene.py mmpose/demo/mmdetection_cfg/faster_rcnn_r50_fpn_coco.py https://download.openxlab.org.cn/models/mmdetection/FasterR-CNN/weight/faster-rcnn_r50_fpn_1x_coco mmpose/configs/body_2d_keypoint/topdown_heatmap/coco/td-hm_hrnet-w32_8xb64-210e_coco-256x192.py ckpt_weight/td-hm_hrnet-w32_8xb64-210e_coco-256x192-81c58e40_20220909.pth --input dataset/test/slim_people_tracking_data_entrance_checkout_first_isles/20250115_tracked_10_48_26_28.mp4 --output-dir result/pose/ --show-kpt-idx --det-file dataset/test/slim_people_tracking_data_entrance_checkout_first_isles/20250115_tracked_10_48_26_28.txt
+```
+
 ### 4. Re-ID
 
 Download the weight from [ReID model](https://drive.google.com/file/d/17qbBmBX7DiT2lOuQ6rGHl8s9deKHkVn2/view?usp=sharing). Put this finetuned weight in the `ckpt_weight` folder.
@@ -120,6 +126,7 @@ script/reid_infer.sh
 
 Adapted python script to function with correct offset of start/end scene
 ```Bash
+cd fast-reid
 python3 tools/infer.py --start 2 --end 2
 ```
 
