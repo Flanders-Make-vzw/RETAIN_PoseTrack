@@ -85,37 +85,59 @@ class reid_inferencer():
 
 def main():
     parser = ArgumentParser()
-    parser.add_argument('--start', type=int, default=0)
-    parser.add_argument('--end', type=int, default=-1)
+    parser.add_argument("--scenes", type=str, nargs='+', help="Scenes to process")
+    parser.add_argument('--bbox_det_root', type=str, help='Path to detection file')
+    parser.add_argument('--video_root', type=str, help='Path to video file')
+    parser.add_argument('--save_root', type=str, help='Path to save file')
+    parser.add_argument('--device', type=str, default="cpu", help='device')
+    parser.add_argument("--reid_weights", type=str, default="../ckpt_weight/aic24.pkl", help="Path to reid weights")
     args = parser.parse_args()
+    
+    det_root = args.bbox_det_root
+    vid_root = args.video_root 
+    save_root = args.save_root
+    if not os.path.exists(save_root):
+        os.mkdir(save_root)
 
-    det_root = os.path.join(root_path, "result/detection")
-    vid_root = os.path.join(root_path, "dataset/test")
-    save_root = os.path.join(root_path, "result/reid")
+    scenes = args.scenes
+    if not isinstance(scenes, list):
+        scenes = [scenes]
 
-    scenes = sorted(os.listdir(det_root))
-    scenes = [s for s in scenes if s.startswith("scene_")]
-    max_scene_num_length = max(len(s.split('_')[-1]) for s in scenes)
-    scenes = [f"scene_{str(i).zfill(max_scene_num_length)}" for i in range(args.start, args.end + 1) if f"scene_{str(i).zfill(max_scene_num_length)}" in scenes]
-
-    reid = torch.load('../ckpt_weight/aic24.pkl', map_location='cpu').cuda().eval()
+    # print("Output path: ", save_root)
+    # print("Video path: ", vid_root)
+    # print("Detection path: ", det_root)
+    # print("Device: ", args.device)
+    print("Loading model...")
+    
+    reid = torch.load(args.reid_weights, map_location=args.device).cuda().eval()
     reid_model = reid_inferencer(reid)
 
     for scene in tqdm(scenes):
+        
         det_dir = os.path.join(det_root, scene)
         vid_dir = os.path.join(vid_root, scene)
         save_dir = os.path.join(save_root, scene)
-        cams = os.listdir(vid_dir)
+        
+        cams = set("".join(cam_name.split(".")[:-1]) for cam_name in os.listdir(vid_dir))
+        print("Processing scene: ", scene)
+        print(f"\t{len(cams)} cameras:", cams)
+
 
         if not os.path.exists(save_dir):
             os.mkdir(save_dir)
 
         for cam in tqdm(cams):
             det_path = os.path.join(det_dir, cam) + ".txt"
-            vid_path = os.path.join(vid_dir, cam) + "/video.mp4"
+            vid_path = os.path.join(vid_dir, cam) + ".mp4"
             save_path = os.path.join(save_dir, cam + ".npy")
-            if os.path.exists(save_path):
-                continue
+
+            assert os.path.exists(det_path), f"Detection file {det_path} does not exist"
+            assert os.path.exists(vid_path), f"Video file {vid_path} does not exist"
+            
+            print("\tDetection path: ", det_path)
+            print("\tVideo path: ", vid_path)
+            print("\tSave path: ", save_path)
+            
             det_annot = np.ascontiguousarray(np.loadtxt(det_path, delimiter=","))
             if len(det_annot) == 0:
                 all_results = np.array([])
@@ -128,6 +150,12 @@ def main():
             video = mmcv.VideoReader(vid_path)
             all_results = []
             det_len = len(det_annot)
+            if det_len == 0:
+                all_results = np.array([])
+                np.save(save_path, all_results)
+                continue
+
+            print("\tDetection sample: ", det_annot[0])
 
             for frame_id, frame in enumerate(tqdm(video)):
                 dets = det_annot[det_annot[:, 0] == frame_id]

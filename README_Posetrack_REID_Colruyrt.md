@@ -1,13 +1,21 @@
 # Colruyt: A Robust Online Multi-Camera People Tracking System With Geometric Consistency and State-aware Re-ID Correction
 
+## TODO:
+
+- [ ] Use process of Ewoud to extract bounding boxes with correct track ID for given cameras
+- [ ] Evaluate number of times a poses can be extracted from a given bounding box => check a few examples
+- [ ] Evaluate feature vector of identical people using original dataset of Colruyt
+- [ ] Plug custom people detector of Colruyt and export to correct format
+- [ ] Hyperparameter tuning
+
+## Done: 
+
+- [x] Extract images of people cropped to bounding box for camera
+- [x] Evaluation of the results against those of Colruyt
+
 This is the official repository for the winning submission to the 8th NVIDIA AI City Challenge (2024) Track 1: Multi-Camera People Tracking.
 - Github: 
 - Link to the paper: 
-
-
-
-
-
 
 
 ## Overall Pipeline
@@ -98,10 +106,7 @@ python3 detection/get_detection.py --scene 2  --proximity_thresh 0.5 --appearanc
 python3 detection/get_detection.py --input /mnt/shared_disk/code_projects/Retain_asset_reID/PoseTrack/dataset/test/slim_people_tracking_data_entrance_checkout_first_isles --proximity_thresh 0.5 --appearance_thresh 0.25 --fuse --conf 0.1 --tsize 640 --track_high_thresh 0.5 --batchsize 16 --save_processed_img --save_annotated_img
 ```
 
-Todos:
-- [ ] Evaluation of the results against those of Colruyt
-- [ ] Plug custom people detector and export to correct format
-- [ ] Hyperparameter tuning
+
 
 ### 3. Pose Estimation
 
@@ -129,6 +134,10 @@ Adapted python script to function with correct offset of start/end scene
 cd fast-reid
 python3 tools/infer.py --start 2 --end 2
 ```
+
+**Single camera feature vector building:**
+
+
 
 ### 5. Tracking
 

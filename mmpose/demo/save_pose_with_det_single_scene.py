@@ -220,7 +220,7 @@ def main():
         if len(bboxes_s) == 0:
             print("No detections for this image.")
             return
-            
+
         # Run pose estimation
         pose_results = inference_topdown(pose_estimator, frame, bboxes_s[:,:4])
         result = infer_one_image(args, frame, bboxes_s, pose_estimator)
