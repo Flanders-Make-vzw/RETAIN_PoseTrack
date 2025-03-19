@@ -61,9 +61,11 @@ def run_tracking(det_dir, pose_dir, reid_dir, cal_file, save_path, verbose=False
         print(f"\nPOSE (#detections x # pose features ({num_pose_features}) [bbox, conf, kpts (x,y,conf)] )")
         print(f"\nREID (#detections x #num reid features{num_reid_features})")
 
+    # Making sure all files are present => non-empty detections, poses and reid
     cameras_to_ignore = []
     for cam_file in cam_files:
-        cam_name = cam_file.replace(".txt", "").replace("_", ".")
+        cam_name = cam_file.replace(".txt", "").replace("_", ".").replace("20250115.tracked.", "")
+        print("Processing camera:", cam_name)
         det_data_camera=np.loadtxt(osp.join(det_dir,cam_file), delimiter=",")
         # handle empty detection
         if len(det_data_camera)==0:
@@ -76,6 +78,7 @@ def run_tracking(det_dir, pose_dir, reid_dir, cal_file, save_path, verbose=False
 
         # sorted
         sorted_cameras[cam_name] = cam_idx
+
         cam_idx += 1
 
         if verbose: print(f"\tDetection {cam_file}: {det_data_camera.shape}")
@@ -106,11 +109,17 @@ def run_tracking(det_dir, pose_dir, reid_dir, cal_file, save_path, verbose=False
             reid_data_scene=reid_data_scene/np.linalg.norm(reid_data_scene, axis=1,keepdims=True)
         reid_data.append(reid_data_scene)
 
+
     max_frame = []
     for det_sv in det_data:
         if len(det_sv):
             max_frame.append(np.max(det_sv[:,0]))
     max_frame = int(np.max(max_frame))
+    print(f"\n\n#cameras: {len(det_data)}")
+    print(f"#cameras AVAILABE: {len(sorted_cameras)}")
+    print(f"#cameras IGNORED: {len(cameras_to_ignore)}")
+    print(f"#cameras PROCESSED: {list(set(sorted_cameras) - set(cameras_to_ignore))}")
+    print(f"#frames: {max_frame + 1}")
 
     # sort cameras according to files
     # load camera calibration
@@ -130,12 +139,11 @@ def run_tracking(det_dir, pose_dir, reid_dir, cal_file, save_path, verbose=False
     sorted_camera_calibs = [
         camera_calibs[name]
         for name in sorted(sorted_cameras, key=lambda x: sorted_cameras[x])]
-    
+
     # save camera idx_int to json file
-    save_path_json = save_path.replace(".txt", ".json")
+    save_path_json = save_path.replace(".txt", "_camera_calibs.json")
     with open(save_path_json, 'w') as f:
         json.dump(sorted_camera_calibs, f, indent=4, cls=NpEncoder)
-
 
     tracker = PoseTracker(sorted_camera_calibs)
 
@@ -147,18 +155,25 @@ def run_tracking(det_dir, pose_dir, reid_dir, cal_file, save_path, verbose=False
 
         # Process each camera
         for cam in tracker.cameras:
-            if verbose: print(f"\t [{frame_id}/{max_frame}] - [{cam.idx_int + 1:02}/{len(tracker.cameras):02}] Processing camera {cam.idx_int:02} with serial {cam.camera_serial}")
+            cam_det = det_data[cam.idx_int]
+            cam_pose = pose_data[cam.idx_int]
+            cam_reid = reid_data[cam.idx_int]
+            cur_det = cam_det[cam_det[:, 0] == frame_id]  # Current detections for the current frame
+            cur_pose = cam_pose[cam_pose[:, 0] == frame_id]  # Current poses for the current frame
+            cur_reid = cam_reid[cam_det[:, 0] == frame_id]  # Current reid features for the current frame
+
+            assert len(cam_det) > 0, f"Detection data for this camera #{cam.idx_int} with serial {cam.camera_serial} is empty."
+
+            if verbose:
+                print(f"\t [{frame_id}/{max_frame}] - [{cam.idx_int + 1:02}/{len(tracker.cameras):02}] Processing camera {cam.idx_int:02} with serial {cam.camera_serial}")
+                print(f"\t{cur_det.shape[0]} DETECTIONS x {cur_det.shape[1]} detection features [frame_id, class, x1, y1, x2, y2, conf] )")
+                print(f"\t{cur_pose.shape[0]} POSES x {cur_pose.shape[1]} pose features [bbox, conf, kpts (x,y,conf)] ")
+                print(f"\t{cur_reid.shape[0]} REID x {cur_reid.shape[1]} reid features")
+
+                if any(len(x) == 0 for x in [cur_det, cur_pose, cur_reid]):
+                    print(f"WARNING: {cam.camera_serial} has empty detection, pose or reid data for frame {frame_id}. Skipping this camera.")
 
             detection_sample_sv = []  # Single-view detection samples
-            det_sv = det_data[cam.idx_int]  # Detection data for the current camera view
-
-            assert len(det_sv) > 0, f"Detection data for this camera #{cam.idx_int} with serial {cam.camera_serial} is empty."
-
-            idx = det_sv[:, 0] == frame_id  # Index for the current frame
-            cur_det = det_sv[idx]  # Current detections for the current frame
-            cur_pose = pose_data[cam.idx_int][idx]  # Current poses for the current frame
-            cur_reid = reid_data[cam.idx_int][idx]  # Current reid features for the current frame
-
             for det, pose, reid in zip(cur_det, cur_pose, cur_reid):
                 if det[-1] < box_thred or len(det) == 0:
                     continue
@@ -167,7 +182,6 @@ def run_tracking(det_dir, pose_dir, reid_dir, cal_file, save_path, verbose=False
                 keypoints_2d = pose[6:].reshape(17, 3)
                 reid_feat = reid
                 cam_id = cam.idx_int
-                frame_id = frame_id
 
                 assert bbox.shape == (5,), f"Expected bbox shape (5,), got {bbox.shape}"
                 assert keypoints_2d.shape == (17, 3), f"Expected keypoints_2d shape (17, 3), got {keypoints_2d.shape}"
@@ -178,29 +192,52 @@ def run_tracking(det_dir, pose_dir, reid_dir, cal_file, save_path, verbose=False
 
             detection_sample_mv.append(detection_sample_sv)
 
-            # print(f"[{cam.idx_int + 1:02}/{len(tracker.cameras):02}] camera {cam.idx_int:02} [{cam.camera_serial}] - #detections = {len(detection_sample_sv)}")
-            assert cam.pos.shape == (3,) , f"Camera {cam.idx_int:02} with serial {cam.camera_serial} has wrong shape: Expected (3,) got {cam.pos.shape}"
-
-        # TODO: add reduction of detections to cameras that overlap
-
         # Update tracker
         tracker.mv_update_wo_pred(detection_sample_mv, frame_id)
 
         frame_results = tracker.output(frame_id)
         results += frame_results
 
-    results = np.concatenate(results,axis=0)
-    sort_idx = np.lexsort((results[:,2],results[:,0]))
+    results = np.concatenate(results, axis=0)
+    sort_idx = np.lexsort((results[:,2],results[:,3]))
     results = np.ascontiguousarray(results[sort_idx])
-    np.savetxt(save_path, results)
+    # Specify the format for saving the results
+    fmt = "%d,%s,%d,%d,%.2f,%.2f,%.2f,%.2f,%.2f,%.2f,%.2f"
+    header = "camera_idx,camera_serial,track_id,frame_id,bbox_x1,bbox_y1,bbox_x2,bbox_y2,output_x,output_y,output_z"
+    
+    # Build a list of rows with proper type conversions
+    final_rows = []
+    for r in results:
+        final_rows.append((
+            int(r[0]),       # camera_idx as int
+            r[1],            # camera_serial as str
+            int(r[2]),       # track_id as int
+            int(r[3]),       # frame_id as int
+            float(r[4]),     # bbox_x as float
+            float(r[5]),     # bbox_y as float
+            float(r[6]),     # bbox_width as float
+            float(r[7]),     # bbox_height as float
+            float(r[8]),     # output_x as float
+            float(r[9]),     # output_y as float
+            float(r[10])     # output_z as float
+        ))
 
+    # Write header and rows to file using the format specifiers
+    with open(save_path, "w") as f:
+        f.write(header + "\n")
+        for row in final_rows:
+            f.write(fmt % row + "\n")
+
+    # np.savetxt(save_path, results, fmt=fmt, delimiter=",", header=header, comments="")
+    
+    # np.savetxt(save_path, results)
 
 if __name__ == '__main__':
     """
     Example of usage
     1. Run the script with the following command:
-    
-        python3 track/run_tracking.py --det_dir result/detection/scene_002 --pose_dir result/pose/scene_002 --reid_dir result/reid/scene_002 --cal_file dataset/calibration.json --save_path result/track/scene_002.txt
+
+        python3 track/run_tracking.py --det_dir result/detection/slim_people_tracking_data_entrance_checkout_first_isles --pose_dir result/pose/slim_people_tracking_data_entrance_checkout_first_isles/poses --reid_dir result/reid/slim_people_tracking_data_entrance_checkout_first_isles --cal_file dataset/test/slim_people_tracking_data_entrance_checkout_first_isles/calibration.json --save_path result/track/slim_people_tracking_data_entrance_checkout_first_isles/track.txt --verbose
     """
     parser = argparse.ArgumentParser(description="Run tracking batch")
     parser.add_argument("--det_dir", type=str, required=True, help="Directory for detection results")

@@ -668,32 +668,53 @@ class PoseTracker():
             aff_mv.append(iou)
         return aff_mv, iou_mv, ovr_det_mv, ovr_tgt_mv
 
-    def CalcJointRays(self, detection_sample_list_mv, verbose=False):
+    # def CalcJointRays(self, detection_sample_list_mv, verbose=False):
+    #     mv_rays = []
+    #     for v in range(self.num_cam):
+    #         cam = self.cameras[v]
+    #         sv_rays = []
+    #         n_detect = len(detection_sample_list_mv[v])
+    #         sample_sv = detection_sample_list_mv[v]
+    #         for s_id, sample in enumerate(sample_sv):
+    #             if verbose: print("#kpts=", self.num_keypoints)
+    #             joints_h = np.vstack((sample.keypoints_2d[:, :-1].T, np.ones((1, self.num_keypoints))))  # 3*n
+    #             if verbose: print(f"joints_h shape: {joints_h.shape}")
+    #             if verbose: print(f"cam.project_inv shape: {cam.project_inv.shape}")
+    #             joints_rays = cam.project_inv @ joints_h
+    #             if verbose: print(f"joints_rays shape after multiplication: {joints_rays.shape}")
+    #             joints_rays /= joints_rays[-1]
+    #             # ORDER MODIFIED
+    #             joints_rays -= np.repeat(cam.pos.reshape(3, 1), self.num_keypoints, axis=1)
+    #             if verbose: print(f"joints_rays shape after subtraction: {joints_rays.shape}")
+    #             joints_rays = joints_rays[:-1]
+    #             if verbose: print(f"joints_rays shape after normalization: {joints_rays.shape}")
+
+    #             joints_rays_norm = joints_rays / (np.linalg.norm(joints_rays, axis=0) + 1e-5)
+    #             joints_rays_norm = joints_rays_norm.T
+    #             sv_rays.append(joints_rays_norm)  # 17*3
+    #         mv_rays.append(sv_rays)
+
+    #     return mv_rays
+    
+    def CalcJointRays(self,detection_sample_list_mv):
         mv_rays = []
         for v in range(self.num_cam):
-            cam = self.cameras[v]
+            cam  = self.cameras[v]
             sv_rays = []
-            n_detect = len(detection_sample_list_mv[v])
+            n_detect= len(detection_sample_list_mv[v])
             sample_sv = detection_sample_list_mv[v]
             for s_id, sample in enumerate(sample_sv):
-                if verbose: print("#kpts=", self.num_keypoints)
-                joints_h = np.vstack((sample.keypoints_2d[:, :-1].T, np.ones((1, self.num_keypoints))))  # 3*n
-                if verbose: print(f"joints_h shape: {joints_h.shape}")
-                if verbose: print(f"cam.project_inv shape: {cam.project_inv.shape}")
-                joints_rays = cam.project_inv @ joints_h
-                if verbose: print(f"joints_rays shape after multiplication: {joints_rays.shape}")
+                joints_h = np.vstack((sample.keypoints_2d[:,:-1].T, np.ones((1,self.num_keypoints)))) #3*n
+                joints_rays =  cam.project_inv @ joints_h
                 joints_rays /= joints_rays[-1]
-                # ORDER MODIFIED
-                joints_rays -= np.repeat(cam.pos.reshape(3, 1), self.num_keypoints, axis=1)
-                if verbose: print(f"joints_rays shape after subtraction: {joints_rays.shape}")
                 joints_rays = joints_rays[:-1]
-                if verbose: print(f"joints_rays shape after normalization: {joints_rays.shape}")
+                joints_rays -= np.repeat(cam.pos.reshape(3,1),self.num_keypoints, axis=1)
 
-                joints_rays_norm = joints_rays / (np.linalg.norm(joints_rays, axis=0) + 1e-5)
+                joints_rays_norm = joints_rays / (np.linalg.norm(joints_rays, axis=0)+1e-5)
                 joints_rays_norm = joints_rays_norm.T
-                sv_rays.append(joints_rays_norm)  # 17*3
+                sv_rays.append(joints_rays_norm) #17*3
             mv_rays.append(sv_rays)
-
+        
         return mv_rays
     
     def match_with_miss_tracks(self, new_track, miss_tracks):
@@ -1002,7 +1023,7 @@ class PoseTracker():
                     for v in track.valid_views:
                         bbox = track.bbox_mv[v]
 
-                        record = np.array([[self.cameras[v].idx_int,self.cameras[v].camera_serial, track.id, frame_id, bbox[0], bbox[1],bbox[2]-bbox[0],bbox[3]-bbox[1], track.output_cord[0], track.output_cord[1],track.output_cord[2]]])
+                        record = np.array([[self.cameras[v].idx_int,self.cameras[v].camera_serial.replace(".", "_"), track.id, frame_id, bbox[0], bbox[1],bbox[2],bbox[3], track.output_cord[0], track.output_cord[1],track.output_cord[2]]])
                         frame_results.append(record)
 
         return frame_results

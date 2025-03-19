@@ -6,7 +6,7 @@ import scipy
 import sys
 sys.path.append('/home/track/aic_cpp')
 import aic_cpp
-
+from scipy.spatial.transform import Rotation as R
 class Camera():
     def __init__(self,calib_data):
         self.camera_serial = calib_data["camera_serial"]
@@ -16,7 +16,7 @@ class Camera():
 
         self.homo_inv = np.linalg.inv(self.homo_mat)
         self.project_inv = scipy.linalg.pinv(self.project_mat)
-        
+
         # Calculate camera position using pseudo-inverse
         R = self.project_mat[:3, :3]  # Extract rotation matrix
         t = np.zeros(3)  # Initialize translation vector
@@ -29,26 +29,55 @@ class Camera():
 
     @staticmethod
     def from_colruyt_calib(calib_data, idx):
+        intrinsics = calib_data["intrinsics"]["camera_matrix"]
+        fx = intrinsics["fx"]
+        fy = intrinsics["fy"]
+        cx = intrinsics["cx"]
+        cy = intrinsics["cy"]
+        s  = intrinsics["s"]
+
+        # Intrinsic Camera Matrix (K)
+        K = np.array([
+            [fx, s, cx],
+            [0, fy, cy],
+            [0,  0,  1]
+        ])
+
+        # extrinsics
+        extrinsics = calib_data["extrinsics"]
+        extrinsics_rotation = extrinsics["rotation"]
+        w,x,y, z = extrinsics_rotation["quaternion_w"],extrinsics_rotation["quaternion_x"],extrinsics_rotation["quaternion_y"], extrinsics_rotation["quaternion_z"]
+        rotation = R.from_quat([x,y, z, w]) #
+        R_mat = rotation.as_matrix()
+        t = np.array([[extrinsics["translation"]["x"]],
+                      [extrinsics["translation"]["y"]],
+                      [extrinsics["translation"]["z"]]])
+        # Extrinsic matrix [R|t]
+        RT = np.hstack((R_mat, t))
+
+        # Projection matrix P
+        P = K @ RT
         
-        s = calib_data["intrinsics"]["camera_matrix"]["s"]
-        w = calib_data["image_size"]["w"]
-        h = calib_data["image_size"]["h"]
+        # For points on the plane z=0, the extrinsic matrix reduces to [r1, r2, t]
+        # where r1 and r2 are the first two columns of R
+        r1 = R_mat[:, 0]
+        r2 = R_mat[:, 1]
+
+        # Stack r1, r2, and t to form a 3x3 matrix for the homography
+        H_extrinsic = np.column_stack((r1, r2, t.flatten()))
+
+        # Compute the homography matrix H
+        H = K @ H_extrinsic
+
         processed_calib_data = {
-            "camera projection matrix": [
-                [s, 0, w / 2],
-                [0, s, h / 2],
-                [0, 0, 1]
-            ],
-            "homography matrix": [
-                [1, 0, 0],
-                [0, 1, 0],
-                [0, 0, 1]
-            ],
+            "camera projection matrix": P,
+            "homography matrix": H,
             "idx": idx,
             "camera_serial": calib_data["camera_serial"],
         }
         camera = Camera(processed_calib_data)
         return camera
+
 
     def to_dict(self):
         return {

@@ -148,5 +148,5 @@ script/run_track.sh
 
 Adapted Python script:
 ```Bash
-python3 track/run_tracking_batch.py
+python3 track/run_tracking.py --det_dir result/detection/slim_people_tracking_data_entrance_checkout_first_isles --pose_dir result/pose/slim_people_tracking_data_entrance_checkout_first_isles/poses --reid_dir result/reid/slim_people_tracking_data_entrance_checkout_first_isles --cal_file dataset/test/slim_people_tracking_data_entrance_checkout_first_isles/calibration.json --save_path result/track/slim_people_tracking_data_entrance_checkout_first_isles --verbose 
 ```
